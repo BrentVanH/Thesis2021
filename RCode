@@ -1,0 +1,490 @@
+
+#############################################################################
+#############################################################################
+## ---- 
+## R Code used for my Master Thesis in Business & Technology 
+## Due date of Thesis: August 2, 2021
+## By Brent Van Hecke
+## Promotor: Prof. Dr. Lieven De Moor
+## Vrije Universiteit Brussel
+## ----
+## Objective of the R analysis:
+## Examine the network effects in Ethereum after popularity increase of DeFi, 
+## and compare with Bitcoin for robustness.
+## ----
+## The data that I collected for this analysis I made available to download on:
+## 
+## ----
+#############################################################################
+#############################################################################
+
+
+## Importing the data for Bitcoin and Ethereum.
+
+# setting the working directory
+getwd()
+setwd("~/Desktop")
+
+# loading ggplot
+library(ggplot2)
+
+# importing the main datasets
+library(readxl)
+eth <- read_xlsx('Ethereum-dataset.xlsx')
+btc <- read_xlsx('Bitcoin-dataset.xlsx')
+
+## Merging the irregular bitcoin variables
+## I import the incomplete data from the Bitcoin variables: 
+## BLOCKSIZE_MEGABYTES, FEES_BTC, HASHRATE_THs 
+## I manipulate these variables and merge them with the previously imported Bitcoin data.
+
+# importing the (incomplete) Bitcoin variables
+btc_var1 <- read_xls('Bitcoin-BLOCKSIZE_MEGABYTES.xls')
+btc_var2 <- read_xls('Bitcoin-FEES_BTC.xls')
+btc_var3 <- read_xls('Bitcoin-HASHRATE_THs.xls')
+
+# combining the data of incomplete Bitcoin variables
+btc_var <- cbind(btc_var1[,1:2], btc_var2[,2], btc_var3[,2])
+
+# manipulating the Bitcoin variables
+btc_var$Timestamp <- as.Date(btc_var$Timestamp)
+btc_var[sapply(btc_var, is.character)] <- lapply(btc_var[sapply(btc_var, is.character)], as.numeric)
+colnames(btc_var)[1] <- 'DATE'
+remove(btc_var1, btc_var2, btc_var3)
+
+# merging the different Bitcoin datasets
+library(dplyr)
+btc <- btc[,1:6]
+btc <- left_join(btc, btc_var, by=c('DATE'))
+remove(btc_var)
+
+##### Now I have the Bitcoin dataset as I needed. ####################
+##### However, the missing values still need to be intrapolated ######
+
+####### INTRAPOLATING the missing values of the Bitcoin data #########
+
+## I use the na_interpolation() function from the library 'imputeTS'. 
+## This solves the problem in the most appropriate way, in my opinion.
+
+# use interpolation to fill up the missing values of the Bitcoin data
+library(imputeTS)
+btc <- btc %>% mutate(BLOCKSIZE_MEGABYTES = na_interpolation(BLOCKSIZE_MEGABYTES),
+                      FEES_BTC = na_interpolation(FEES_BTC),
+                      HASHRATE_THs = na_interpolation(HASHRATE_THs))
+
+
+###################################################################
+######## Manipulating the data to get the right data types ########
+###################################################################
+
+# I need to perform a few manipulations to the data to have all the right variable types. 
+# Also, I mutate the important variable DAA, deviding it by 100,000. 
+# I do this to avoid very large values that can lead to singularities in the matrices in later stages of the analysis.
+# I encountered that problem at my first trials which led to errors.
+
+# manipulating the data sets to have the right variable types
+library(tidyverse)
+btc$DATE <- as.Date(btc$DATE, format = "%Y-%m-%d")
+eth$DATE <- as.Date(eth$DATE, format = "%Y-%m-%d")
+btc[sapply(btc, is.character)] <- lapply(btc[sapply(btc, is.character)], as.numeric)
+eth[sapply(eth, is.character)] <- lapply(eth[sapply(eth, is.character)], as.numeric)
+
+# dividing the variable DAA by 100,000 to avoid values approaching Infinity
+btc <- btc %>% mutate(DAA = DAA/100000)
+eth <- eth %>% mutate(DAA = DAA/100000)
+
+
+
+
+
+#############################################################
+#############################################################
+##### Comparison of the different network-effect ‘laws’ #####
+#############################################################
+#############################################################
+
+
+##################### First series ##########################
+######################## summary ############################
+
+# I start by plotting the price and DAA in a proper theme to add in APA style thesis
+# Unfortunately, I can't make a second axis on one plot work, so I compare them next to each other
+
+# From the plotted data, the relationship between price and the total daily number of active addresses 
+# ... already seemed easier to explain for Ethereum than for Bitcoin, for whatever reason.
+
+# Then I make my first series of linear regression models and print a summary for both Ethereum and Bitcoin, 
+# ... to compare the R-squared value as a measure of goodness of fit of the models. 
+
+# (!) Important to note that I add '0 + ...' to every regression. 
+# This is to avoid the estimation of an intercept in the linear regression model. 
+# Since both datasets start from price approximately zero this is a rational choice. 
+# I fit a linear regression model for all four laws: Metcalfe, Odlyzko, Reed, Sarnoff.
+
+# For both Ethereum and Bitcoin, Metcalfe's Law results in the best goodness of fit of the model. 
+# The fit is better for Ethereum than for Bitcoin.
+
+
+##################### First series ##########################
+#########################  code  ############################
+
+### plotting the data for ETH
+
+eth1 <- ggplot(eth, aes(x = DATE)) + 
+  geom_line(aes(y = PRICE), size=0.5) + 
+  ggtitle('ETH Daily Price in USD (2015-2021)') +
+  ylab('Price (USD)') + xlab('Time') + 
+  scale_x_date(date_labels="%Y", date_breaks="1 year") +
+  scale_y_continuous(breaks=c(0, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500),
+                     labels = function(x) sprintf("%g", x)) +
+  theme_bw() +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5)) 
+
+
+eth2 <- ggplot(eth, aes(x = DATE)) + 
+  geom_line(aes(y = DAA*100000), size=0.5) +
+  ggtitle('Unique Daily Active Addresses for Ethereum (2015-2021)') +
+  ylab('DAA') + xlab('Time') +
+  scale_x_date(date_labels="%Y", date_breaks="1 year") +
+  scale_y_continuous(breaks=c(0, 100000, 200000, 300000, 400000, 500000, 600000, 700000, 800000), 
+                     labels = function(x) sprintf("%g", x)) +
+  theme_bw() +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5)) 
+
+
+library(gridExtra)
+grid.arrange(eth1, eth2, ncol=2)
+
+
+### plotting the data for BTC
+
+btc1 <- ggplot(btc, aes(x = DATE)) + 
+  geom_line(aes(y = PRICE), size=0.5) + 
+  ggtitle('BTC Daily Price in USD (2010-2021)') +
+  ylab('Price (USD)') + xlab('Time') + 
+  scale_x_date(date_labels="%Y", date_breaks="1 year") +
+  scale_y_continuous(breaks=c(0, 10000, 20000, 30000, 40000, 50000, 60000, 70000), 
+                     labels = function(x) sprintf("%g", x)) +
+  theme_bw() +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5)) 
+
+btc2 <- ggplot(btc, aes(x = DATE)) + 
+  geom_line(aes(y = DAA*100000), size=0.5) +
+  ggtitle('Unique Daily Active Addresses for Bitcoin (2010-2021)') +
+  ylab('DAA') + xlab('Time') +
+  scale_x_date(date_labels="%Y", date_breaks="1 year") +
+  scale_y_continuous(breaks=c(0, 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000),
+                     labels = function(x) sprintf("%.9g", x)) +
+  theme_bw() +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5)) 
+
+library(gridExtra)
+grid.arrange(btc1, btc2, ncol=2)
+
+
+############################ END OF PLOTS ############################
+
+########################### LM REGRESSION 1 ##########################
+# add "0 + ..." to every regression to set the intercept equal to 0
+
+# ETH: fitting the regressions
+eth_sarnoff1 <- lm(formula = PRICE ~ 0 + DAA, data = eth)
+eth_reed1 <- lm(formula = PRICE ~ 0 + I(2^DAA), data = eth)
+eth_odlyzko1 <- lm(formula = PRICE ~ 0 + I(DAA * log(DAA, base = exp(1))), data = eth)
+eth_metcalfe1 <- lm(formula = PRICE ~ 0 + I(DAA^2), data = eth)
+
+# ETH: summary of the regressions
+summary(eth_metcalfe1)   
+summary(eth_odlyzko1)    
+summary(eth_reed1)       
+summary(eth_sarnoff1)    
+
+##########################################################################
+
+# BTC: fitting the regressions
+btc_sarnoff1 <- lm(formula = PRICE ~ 0 + DAA, data = btc)
+btc_reed1 <- lm(formula = PRICE ~ 0 + I(2^DAA), data = btc)
+btc_odlyzko1 <- lm(formula = PRICE ~ 0 + I(DAA * log(DAA, base = exp(1))), data = btc)
+btc_metcalfe1 <- lm(formula = PRICE ~ 0 + I(DAA^2), data = btc)
+
+# BTC: summary of the regressions
+summary(btc_metcalfe1)   
+summary(btc_odlyzko1)    
+summary(btc_reed1)       
+summary(btc_sarnoff1)    
+
+##########################################################################
+############ PLOTS with estimated coefficient k of Metcalfe ##############
+##########################################################################
+
+### Adding Metcalfe's Law to the plots
+eth$pred_metcalfe1 <- eth_metcalfe1$coefficients*(eth$DAA)^2
+btc$pred_metcalfe1 <- btc_metcalfe1$coefficients*(btc$DAA)^2
+
+### plotting the data for ETH
+eth3 <- ggplot(eth, aes(x = DATE)) + 
+  geom_line(aes(y = PRICE), size=0.5) + 
+  geom_line(aes(y = pred_metcalfe1), size=0.1, color = "red") +
+  ggtitle("Metcalfe's Law (k = 50.19) on ETH Daily Price in USD (2015-2021)
+          R-squared value = .822") +
+  ylab('Price (USD)') + xlab('Time') + 
+  scale_x_date(date_labels="%Y", date_breaks="1 year") +
+  scale_y_continuous(breaks=c(0, 500, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500),
+                     labels = function(x) sprintf("%g", x)) +
+  theme_bw() +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5)) 
+  
+# View plot
+eth3
+
+### plotting the data for BTC
+btc3 <- ggplot(btc, aes(x = DATE)) + 
+  geom_line(aes(y = PRICE), size=0.5) + 
+  geom_line(aes(y = pred_metcalfe1), size=0.1, color = "red") +
+  ggtitle("Metcalfe's Law (k = 187.12) on BTC Daily Price in USD (2010-2021)
+          R-squared value = .656") +
+  ylab('Price (USD)') + xlab('Time') + 
+  scale_x_date(date_labels="%Y", date_breaks="1 year") +
+  scale_y_continuous(breaks=c(0, 10000, 20000, 30000, 40000, 50000, 60000, 70000), 
+                     labels = function(x) sprintf("%g", x)) +
+  theme_bw() +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        plot.title = element_text(hjust = 0.5)) 
+
+# View plot
+btc3
+
+##################### Second series ##########################
+#######################  summary  ##########################
+
+
+# I now divide the data in two: pre 24/04/2018 and post 24/04/2018.
+# I do this by creating an interaction effect with a newly created indicator variable 
+# ... that takes on a value of 1 after 24/04/2018 and a value of 0 before 24/04/2018. 
+# Using this interaction effect, I can show how the network effect coefficient has changed after 24/04/2018. 
+
+# First of all, Metcalfe's law still maximizes the R-squared value for both Ethereum and Bitcoin. 
+# The network coefficient k has increased for both
+
+##################### Second series ##########################
+#######################  code  ##########################
+
+# defining an indicator variable that takes on a value of 1 after 24/04/2018, and 0 before 24/04/2018
+btc$date_ind <- (btc$DATE >= as.Date('2018-04-24'))*1
+eth$date_ind <- (eth$DATE >= as.Date('2018-04-24'))*1
+
+# add "0 + ..." to every regression to set the intercept equal to 0
+
+# ETH: fitting the regressions
+eth_metcalfe2 <- lm(formula = PRICE ~ 0 + I(DAA^2) + date_ind:I(DAA^2), data = eth)
+eth_odlyzko2 <- lm(formula = PRICE ~ 0 + I(DAA * log(DAA)) + date_ind:I(DAA * log(DAA)), data = eth)
+eth_reed2 <- lm(formula = PRICE ~ 0 + I(2^DAA) + date_ind:I(2^DAA), data = eth)
+eth_sarnoff2 <- lm(formula = PRICE ~ 0 + DAA + date_ind:DAA, data = eth)
+
+# ETH: summary of the regressions
+summary(eth_metcalfe2)   
+summary(eth_odlyzko2)    
+summary(eth_reed2)       
+summary(eth_sarnoff2)    
+
+####################################################
+
+# BTC: fitting the regressions
+btc_metcalfe2 <- lm(formula = PRICE ~ 0 + I(DAA^2) + date_ind:I(DAA^2), data = btc)
+btc_odlyzko2 <- lm(formula = PRICE ~ 0 + I(DAA * log(DAA)) + date_ind:I(DAA * log(DAA)), data = btc)
+btc_reed2 <- lm(formula = PRICE ~ 0 + I(2^DAA) + date_ind:I(2^DAA), data = btc)
+btc_sarnoff2 <- lm(formula = PRICE ~ 0 + DAA + date_ind:DAA, data = btc)
+
+# BTC: summary of the regressions
+summary(btc_metcalfe2)   
+summary(btc_odlyzko2)    
+summary(btc_reed2)       
+summary(btc_sarnoff2)    
+
+
+##################### Third series ##########################
+#######################  summary  ##########################
+
+
+# Focus on Metcalfe, others are for completeness 
+# Control for quality variables ETHEREUM, 
+# ... to satisfy the implicit assumption of Metcalfe's law that the network properties remain stable. 
+# I control for the variables FEES_WEI, BLOCKSIZE_BYTES, CONTRACTS_VERIFIED and HASHRATE_GHs. 
+
+# Although all the control variables are significant in explaining the price, 
+# it does not change the sign of the relationship between price and the interaction effect. 
+# This means that the network effect has increased after 24/04/2018, according to the results of these regression models. 
+
+# we add "0 + ..." to every regression to set the intercept equal to 0
+
+# ETH: fitting the regressions
+eth_metcalfe3 <- lm(formula = PRICE ~ 0 + I(DAA^2) + date_ind:I(DAA^2) + FEES_WEI + BLOCKSIZE_BYTES + CONTRACTS_VERIFIED + HASHRATE_GHs, data = eth)
+eth_odlyzko3 <- lm(formula = PRICE ~ 0 + I(DAA * log(DAA)) + date_ind:I(DAA * log(DAA)) + FEES_WEI + BLOCKSIZE_BYTES + CONTRACTS_VERIFIED + HASHRATE_GHs, data = eth)
+eth_reed3 <- lm(formula = PRICE ~ 0 + I(2^DAA) + date_ind:I(2^DAA) + FEES_WEI + BLOCKSIZE_BYTES + CONTRACTS_VERIFIED + HASHRATE_GHs, data = eth)
+eth_sarnoff3 <- lm(formula = PRICE ~ 0 + DAA + date_ind:DAA + FEES_WEI + BLOCKSIZE_BYTES + CONTRACTS_VERIFIED + HASHRATE_GHs, data = eth)
+
+# ETH: summary of the regressions
+summary(eth_metcalfe3)   
+summary(eth_odlyzko3)    
+summary(eth_reed3)       
+summary(eth_sarnoff3)    
+    
+
+###### 
+
+# Control for quality variables BITCOIN, 
+# ... to satisfy the implicit assumption of Metcalfe's law that the network properties remain stable. 
+# I control for the variables FEES_BTC, BLOCKSIZE_MEGABYTES, and HASHRATE_THs. 
+
+# Although all the control variables are significant in explaining the price, 
+# it does not change the sign of the relationship between price and the interaction effect. 
+# This means that the network effect has increased after 24/04/2018, according to the results of these regression models. 
+# HOWEVER, note that for Metcalfe, the second coefficient becomes insignificant (p > 0.1)
+# Do something with this in discussion!
+
+# we add "0 + ..." to every regression to set the intercept equal to 0
+
+# BTC: fitting the regressions
+btc_sarnoff3 <- lm(formula = PRICE ~ 0 + DAA + date_ind:DAA + FEES_BTC + BLOCKSIZE_MEGABYTES + HASHRATE_THs, data = btc)
+btc_reed3 <- lm(formula = PRICE ~ 0 + I(2^DAA) + date_ind:I(2^DAA) + FEES_BTC + BLOCKSIZE_MEGABYTES + HASHRATE_THs, data = btc)
+btc_odlyzko3 <- lm(formula = PRICE ~ 0 + I(DAA * log(DAA)) + date_ind:I(DAA * log(DAA)) + FEES_BTC + BLOCKSIZE_MEGABYTES + HASHRATE_THs, data = btc)
+btc_metcalfe3 <- lm(formula = PRICE ~ 0 + I(DAA^2) + date_ind:I(DAA^2) + FEES_BTC + BLOCKSIZE_MEGABYTES + HASHRATE_THs, data = btc)
+
+# BTC: summary of the regressions
+summary(btc_metcalfe3)   # R^2: 0.7670 
+summary(btc_odlyzko3)    # R^2: 0.7539      
+summary(btc_reed3)       # R^2: 0.7997     
+summary(btc_sarnoff3)    # R^2: 0.7535     
+
+
+##################### END of linear regression models ##########################
+##################### END of linear regression models ##########################
+##################### END of linear regression models ##########################
+
+
+#########################################################
+#########################################################
+
+###### Network size growth-model in Metcalfe’s Law ######
+
+#########################################################
+#########################################################
+
+# Metcalfe (2013) also proposed a relationship for the growth of the network size in relation to time, 
+# ... which he termed the netoid function. 
+# The formula of the netoid function is defined as follows: y = a/(1 + exp(-r*(t-m))).
+
+# First of all, 
+# I define an integer value of the data variables to use as parameter t. 
+# Then, I create a function that automatically fits the netoid function to the data. 
+# The function picks some reasonable starting values so that it converges appropriately using the function nls(). 
+
+# I run the function for the whole dataset and the subset, for both Ethereum and Bitcoin.
+
+# create an integer value of the date variables
+btc$time <- 0:(nrow(btc)-1)
+eth$time <- 0:(nrow(eth)-1)
+
+# function that automatically fits a netoid curve
+fit.netoid <- function(data, time, bitcoin){
+  d <- data.frame(y=data, t=time)
+  
+  # Must have at least 3 datapoints at different times
+  if (length(unique(d$t)) < 3) stop("too few data points to fit curve")
+  
+  # picking appropriate starting values
+  starting.values <- c(a=max(d$y)*3, 
+                       r=ifelse(bitcoin, 0.5, 0.2), 
+                       m=which.max(diff(d$y)))
+  print("Starting Values for Optimization: ")
+  print(starting.values)
+  ##########################
+  
+  # the formula of the netoid function
+  formula.netoid <- "y~a/(1 + exp(-r*(t-m)))"
+  nls(formula.netoid, d, starting.values, nls.control(maxiter = 1000))
+}
+
+# fitting the netoid function on the full data
+nls_btc <- fit.netoid(btc$DAA, btc$time, TRUE)
+nls_eth <- fit.netoid(eth$DAA, eth$time, FALSE)
+
+# summarizing the results
+summary(nls_btc)
+summary(nls_eth)
+
+# fitting the netoid function on the subset until 24/04/2018
+nls_btc_bfr <- fit.netoid(btc$DAA[!btc$date_ind], btc$time[!btc$date_ind], TRUE)
+nls_eth_bfr <- fit.netoid(eth$DAA[!eth$date_ind], eth$time[!eth$date_ind], FALSE)
+
+# summarizing the results
+summary(nls_btc_bfr)
+summary(nls_eth_bfr)
+
+
+###################### end of ############################
+###### Network size growth-model in Metcalfe’s Law ######
+
+
+
+
+
+
+######################################################
+## Metcalfe’s Law also has a linear cost hypothesis ##
+######################################################
+
+# Note: after revision of thesis objective I decided to leave this part out.
+# it didn't seem relevant after all, and the relevance to do this part in addition to
+# ... the rest was unsufficient. Therefore I decided to not include it, but I leave it here.
+
+# Finally, I want to test the linear cost hypothesis. 
+# I do this by testing the regression with dependent variable DAA against the regression with dependent variable DAA^2. 
+# For Bitcoin, the fit is better for DAA^2, with an R-squared value of 0.6492 against 0.5632. 
+# However, for Ethereum, the fit is better for DAA, with an R-squared value of 0.8144 against 0.7117.
+
+# BTC: fitting the regressions
+btc_model1 <- lm(formula = DAA ~ HASHRATE_THs, data = btc)
+btc_model2 <- lm(formula = I(DAA^2) ~ HASHRATE_THs, data = btc)
+
+# BTC: summarizing the regressions
+summary(btc_model1) # R-squared: 0.5632  
+summary(btc_model2) # R-squared: 0.6492 
+
+# ETH: fitting the regressions
+eth_model1 <- lm(formula = DAA ~ HASHRATE_GHs, data = eth)
+eth_model2 <- lm(formula = I(DAA^2) ~ HASHRATE_GHs, data = eth)
+
+# ETH: summarizing the regressions
+summary(eth_model1) # R-squared: 0.8144   
+summary(eth_model2) # R-squared: 0.7117   
+
